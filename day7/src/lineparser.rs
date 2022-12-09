@@ -7,7 +7,7 @@
 // parse by each separate command and args
 // ls -> command, args -> store each in a path
 
-use std::{str::Lines, rc::Rc, collections::HashMap, num::ParseIntError};
+use std::{str::Lines, collections::HashMap, num::ParseIntError};
 
 
 pub struct Parser<'a> {
@@ -16,7 +16,7 @@ pub struct Parser<'a> {
     // well the entire &str is large, the lines() method returns &str, &String just derefs to &str
 
     iter: Lines<'a>,
-    explorer: HashMap<&'a str, Glob<'a>>,
+    explorer: HashMap<String, Glob>,
     curpath: String,
 }
 
@@ -26,15 +26,15 @@ pub enum ParseErr {
     CommandNotRecognized,
     LineTooShort,
     NoPrevPath,
-    PathDoesNotExit,
+    PathDoesNotExist,
     NoPathArg,
     ParseIntError,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Glob<'a> {
+pub enum Glob {
     File(usize),
-    Dir(Vec<&'a str>)
+    Dir,
 }
 
 impl From<ParseIntError> for ParseErr {
@@ -59,19 +59,22 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn next_command(&mut self) -> Result<(), ParseErr> {
+    pub fn parse_line(&mut self) -> Result<(), ParseErr> {
         let line = Self::grab_next_line(&mut self.iter)?;
 
-        match line.get(0..3) {
+        match line.get(0..4) {
             Some("$ cd") => {
                 let path = line.get(5..).ok_or(ParseErr::LineTooShort)?;
                 self.cd(path)?;
             },
-            Some("$ ls") => {
-                self.ls()?;
+            Some("$ ls") => (),
+            Some(command) => {
+                println!("Some({}) did not match", command);
+                self.ls(line)?;
             },
-            Some(_) => (),
-            None => (),
+            None => {
+                return Err(ParseErr::NoMoreLines);
+            },
         };
 
         dbg!(line);
@@ -103,7 +106,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    pub fn cd(&mut self, directory: &str) -> Result<(), ParseErr> {
+    pub fn cd(&mut self, directory: &'a str) -> Result<(), ParseErr> {
         // take the directory and change the current path?
 
         // case of /, change directory to outermost
@@ -116,13 +119,16 @@ impl<'a> Parser<'a> {
         if directory == ".." {
             // remove the last /path ie /root/file => /root
             self.set_curpath_to_prev()?;
+            return Ok(());
         }
 
-        if !self.explorer.contains_key(directory) {
-            return Err(ParseErr::PathDoesNotExit);
+        let abs_path = self.get_abs_path(directory);
+
+        if !self.explorer.contains_key(&abs_path) {
+            return Err(ParseErr::PathDoesNotExist);
         }
 
-        self.curpath.push_str(directory);
+        self.curpath = abs_path;
 
         Ok(())
     }
@@ -131,9 +137,13 @@ impl<'a> Parser<'a> {
         Ok(lines.next().ok_or(ParseErr::NoMoreLines)?.trim())
     }
 
-    pub fn ls(&mut self) -> Result<(), ParseErr> {
-        let mut line = Self::grab_next_line(&mut self.iter)?;
-        while line.get(0..1) != Some("$") {
+    pub fn ls(&mut self, line: &'a str) -> Result<(), ParseErr> {
+        // if the line is not a command then save it to the explorer map
+        //
+        //
+        // let mut line = Self::grab_next_line(&mut self.iter)?;
+
+        if line.get(0..1) != Some("$") {
             if line.get(0..3) == Some("dir") {
                 let dir = line.get(4..).ok_or(ParseErr::NoPathArg)?;
                 self.save_dir_to_path(dir);
@@ -143,18 +153,25 @@ impl<'a> Parser<'a> {
                 let file = words.next().ok_or(ParseErr::NoPathArg)?;
                 self.save_file_to_path(file, size);
             }
-            line = Self::grab_next_line(&mut self.iter)?;
+            // line = Self::grab_next_line(&mut self.iter)?;
         }
 
         Ok(())
     }
 
+    fn get_abs_path(&self, path: &'a str) -> String {
+        if self.curpath == "/" {
+            return format!("/{}", path);
+        }
+        format!("{}/{}", self.curpath, path)
+    }
+
     fn save_dir_to_path(&mut self, path: &'a str) {
-        self.explorer.insert(path, Glob::Dir(Vec::new()));
+        self.explorer.insert(self.get_abs_path(path), Glob::Dir);
     }
 
     fn save_file_to_path(&mut self, path: &'a str, size: usize) {
-        self.explorer.insert(path, Glob::File(size));
+        self.explorer.insert(self.get_abs_path(path), Glob::File(size));
     }
 
 }
@@ -190,23 +207,73 @@ mod tests {
                        7214296 k";
 
         let mut parser = Parser::new(content);
-        parser.next_command().unwrap();
+        parser.parse_line().unwrap();
         assert_eq!(parser.curpath, "/".to_owned());
 
-        parser.next_command().unwrap();
+        parser.parse_line().unwrap();
+        parser.parse_line().unwrap();
+        parser.parse_line().unwrap();
+        parser.parse_line().unwrap();
+        parser.parse_line().unwrap();
         // move iterator up like 4
         // add each to the explorer
         let exp = HashMap::from([
-            ("a", Glob::Dir(vec![])),
-            ("b.txt", Glob::File(14848514)),
-            ("c.dat", Glob::File(8504156)),
-            ("d", Glob::Dir(vec![])),
+            ("/a".into(), Glob::Dir),
+            ("/b.txt".into(), Glob::File(14848514)),
+            ("/c.dat".into(), Glob::File(8504156)),
+            ("/d".into(), Glob::Dir),
         ]);
         assert_eq!(parser.explorer, exp);
 
-        parser.next_command().unwrap();
-        // assert_eq!(parser.curpath, "/a".to_owned());
+        parser.parse_line().unwrap();
+        assert_eq!(parser.curpath, "/a".to_owned());
 
+        parser.parse_line().unwrap();
+        parser.parse_line().unwrap();
+        parser.parse_line().unwrap();
+        parser.parse_line().unwrap();
+        parser.parse_line().unwrap();
+
+        let exp = HashMap::from([
+            ("/a".into(), Glob::Dir),
+            ("/b.txt".into(), Glob::File(14848514)),
+            ("/c.dat".into(), Glob::File(8504156)),
+            ("/d".into(), Glob::Dir),
+            ("/a/e".into(), Glob::Dir),
+            ("/a/f".into(), Glob::File(29116)),
+            ("/a/g".into(), Glob::File(2557)),
+            ("/a/h.lst".into(), Glob::File(62596)),
+        ]);
+        assert_eq!(parser.explorer, exp);
+
+        parser.parse_line().unwrap();
+        parser.parse_line().unwrap();
+        parser.parse_line().unwrap();
+        parser.parse_line().unwrap();
+        parser.parse_line().unwrap();
+        parser.parse_line().unwrap();
+        parser.parse_line().unwrap();
+        parser.parse_line().unwrap();
+        parser.parse_line().unwrap();
+        parser.parse_line().unwrap();
+        parser.parse_line().unwrap();
+
+        let exp = HashMap::from([
+            ("/a".into(), Glob::Dir),
+            ("/b.txt".into(), Glob::File(14848514)),
+            ("/c.dat".into(), Glob::File(8504156)),
+            ("/d".into(), Glob::Dir),
+            ("/a/e".into(), Glob::Dir),
+            ("/a/f".into(), Glob::File(29116)),
+            ("/a/g".into(), Glob::File(2557)),
+            ("/a/h.lst".into(), Glob::File(62596)),
+            ("/a/e/i".into(), Glob::File(584)),
+            ("/d/j".into(), Glob::File(4060174)),
+            ("/d/d.log".into(), Glob::File(8033020)),
+            ("/d/d.ext".into(), Glob::File(5626152)),
+            ("/d/k".into(), Glob::File(7214296)),
+        ]);
+        assert_eq!(parser.explorer, exp);
     }
 
     #[test]
