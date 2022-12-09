@@ -77,8 +77,13 @@ impl<'a> Parser<'a> {
             },
         };
 
-        dbg!(line);
+        // dbg!(line);
         Ok(())
+    }
+
+    pub fn parse(mut self) -> HashMap<String, Glob> {
+        while self.parse_line().is_ok() {}
+        self.explorer
     }
 
     fn pops_to_return_to_prev_path(path: &str) -> Result<usize, ParseErr> {
@@ -101,7 +106,7 @@ impl<'a> Parser<'a> {
 
         (0..index).for_each(|_| {self.curpath.pop();});
 
-        println!("the / in the path is at {}, the string up to that point is {}", index, &self.curpath);
+        // println!("the / in the path is at {}, the string up to that point is {}", index, &self.curpath);
 
         Ok(())
     }
