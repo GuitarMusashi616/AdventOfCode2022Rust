@@ -7,7 +7,19 @@ const DIRECTIONS: [(isize, isize); 4] = [(0, -1), (0, 1), (-1, 0), (1, 0)];
 pub enum Tree {
     Visible,
     Invisible,
-    Undetermined,
+}
+
+pub fn get_dim(string: &str) {
+    let mut N = 0;
+    let mut M = 0;
+
+    for line in string.lines() {
+        if N == 0 {
+            N = line.len()
+        }
+        M += 1;
+    }
+    println!("N: {}, M: {}", N, M);
 }
 
 pub struct Forest<const N: usize, const M: usize> {
@@ -19,7 +31,7 @@ impl<const N: usize, const M: usize> Forest<N, M> {
     pub fn new(grid: [[u8; N]; M]) -> Self {
         Forest {
             grid,
-            visible: [[Tree::Undetermined; N]; M],
+            visible: [[Tree::Invisible; N]; M],
         }
     }
 
@@ -35,6 +47,18 @@ impl<const N: usize, const M: usize> Forest<N, M> {
         string
     }
 
+    pub fn from_str(string: &str) -> Self {
+        let mut grid = [[0; N]; M];
+        for (i, line ) in string.lines().enumerate() {
+            for (j, char) in line.chars().enumerate() {
+                let ascii = char as u8;
+                grid[i][j] = ascii - ZERO;
+            }
+        }
+        // println!("{:?}", grid);
+        Forest::<N, M>::new(grid)
+    }
+
     pub fn visibility_to_str(&self) -> String {
         let mut string = String::new();
         for row in self.visible {
@@ -42,7 +66,6 @@ impl<const N: usize, const M: usize> Forest<N, M> {
                 let repr = match col {
                     Tree::Visible => 'V',
                     Tree::Invisible => 'I',
-                    Tree::Undetermined => 'U',
                 };
                 string.push(repr);
             }
@@ -51,67 +74,93 @@ impl<const N: usize, const M: usize> Forest<N, M> {
         string
     }
 
-
-    pub fn mark_edges_visible(&mut self) {
-        for j in 0..M-1 {
-            self.visible[0][j] = Tree::Visible;
+    fn in_bounds(&self, i: isize, j: isize) -> bool {
+        if (0 <= i && i < N as isize) && (0 <= j && j < M as isize) {
+            return true;
         }
-        for i in 0..N-1 {
-            self.visible[i][N - 1] = Tree::Visible;
-        }
-        for j in (1..M).rev() {
-            self.visible[M - 1][j] = Tree::Visible;
-        }
-        for i in (1..N).rev() {
-            self.visible[i][0] = Tree::Visible;
-        }
-    }
-    pub fn collect_adj_to_be_visible(&mut self, buffer: &mut Vec<(usize, usize)>, i: usize, j: usize) {
-        for (di, dj) in DIRECTIONS {
-            let (ni, nj) = (i as isize + di, j as isize + dj);
-            // skip if out of bounds
-            if (0 > ni || ni >= N as isize) || (0 > nj || nj >= M as isize) {
-                continue
-            }
-            let ni = ni as usize;
-            let nj = nj as usize;
-
-            // skip if tree is already visible
-            if self.visible[ni][nj] == Tree::Visible {
-                continue;
-            }
-
-            let visible_tree = self.grid[i][j];
-            let new_tree = self.grid[ni][nj];
-
-            if new_tree > visible_tree {
-                buffer.push((ni, nj))
-            }
-           
-        }
+        false
     }
 
-    pub fn get_cells_to_make_visible(&mut self) -> Vec<(usize, usize)> {
-        let mut buffer = Vec::new();
-        for i in 0..self.visible.len() {
-            for j in 0..self.visible.len() {
-                if self.visible[i][j] != Tree::Visible {
-                    continue
+    pub fn clearing_to_edge(&self, mut i: isize, mut j: isize, dir: (isize, isize)) -> bool {
+        let (dir_i, dir_j) = dir;
+        let this_tree_height = self.grid[i as usize][j as usize];
+        loop {
+            i += dir_i;
+            j += dir_j;
+            if !self.in_bounds(i, j) {
+                break;
+            }
+            let that_tree_height = self.grid[i as usize][j as usize];
+            if this_tree_height <= that_tree_height {
+                return false;
+            }
+        }
+        true
+    }
+
+    pub fn count_trees_visible_in_dir(&self, mut i: isize, mut j: isize, dir: (isize, isize)) -> u32 {
+        let (dir_i, dir_j) = dir;
+        let this_tree_height = self.grid[i as usize][j as usize];
+        let mut vis_count = 0;
+        loop {
+            i += dir_i;
+            j += dir_j;
+            if !self.in_bounds(i, j) {
+                break;
+            }
+            let that_tree_height = self.grid[i as usize][j as usize];
+            if this_tree_height <= that_tree_height {
+                return vis_count + 1;
+            }
+            vis_count += 1;
+        }
+        vis_count
+    }
+
+    pub fn mark_visible(&mut self) {
+        for i in 0..N {
+            for j in 0..M {
+                for dir in DIRECTIONS {
+                    let visible = self.clearing_to_edge(i as isize, j as isize, dir);
+                    if visible {
+                        self.visible[i][j] = Tree::Visible;
+                        break;
+                    }
                 }
-                self.collect_adj_to_be_visible(&mut buffer, i, j);
             }
         }
-        buffer
     }
 
-    pub fn mark_visible_neighbors(&mut self) -> usize {
-        let cells_to_make_visible = self.get_cells_to_make_visible();
-        let len = cells_to_make_visible.len();
-        for (i, j) in cells_to_make_visible {
-            self.visible[i][j] = Tree::Visible;
+    pub fn count_visible(&self) -> u32 {
+        let mut count = 0;
+        for row in self.visible {
+            for col in row {
+                if col == Tree::Visible {
+                    count += 1;
+                }
+            }
         }
-        len
+        count
     }
+
+    pub fn find_max_scenic_score(&mut self) -> u32 {
+        let mut highest = 0;
+        for i in 0..N {
+            for j in 0..M {
+                let mut scenic_counts = Vec::new();
+                for dir in DIRECTIONS {
+                    let vis_count = self.count_trees_visible_in_dir(i as isize, j as isize, dir);
+                    scenic_counts.push(vis_count);
+                }
+                let scenic_score = scenic_counts.into_iter().fold(1, |acc, x| acc*x);
+                if scenic_score > highest {
+                    highest = scenic_score;
+                }
+            }
+        }
+        highest
+    }
+
 }
 
 impl<const N: usize, const M: usize> Display for Forest<N, M> {
@@ -123,6 +172,12 @@ impl<const N: usize, const M: usize> Display for Forest<N, M> {
 impl<const N: usize, const M: usize> Debug for Forest<N, M> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}\n{}", self.to_str(), self.visibility_to_str())
+    }
+}
+
+impl<const N: usize, const M: usize> From<&str> for Forest<N, M> {
+    fn from(input: &str) -> Self {
+        Self::from_str(input)
     }
 }
 
@@ -149,38 +204,41 @@ mod tests {
     }
 
     #[test]
-    fn test_mark_edges_visible() {
-        let mut forest = default_fixture();
+    fn test_clearing_to_edge() {
+        let forest = default_fixture();
+        let exp = [
+            [true, true, true, true, true],
+            [true, true, true, false, true],
+            [true, true, false, true, true],
+            [true, false, true, false, true],
+            [true, true, true, true, true],
+        ];
+        let mut res = [[false; 5]; 5];
         for i in 0..5 {
             for j in 0..5 {
-                assert_eq!(forest.visible[i][j], Tree::Undetermined);
+                for dir in DIRECTIONS {
+                    let visible = forest.clearing_to_edge(i as isize, j as isize, dir);
+                    if visible {
+                        res[i][j] = true;
+                        break;
+                    }
+                }
             }
         }
-        forest.mark_edges_visible();
-        for i in 0..5 {
-            for j in [0, 4] {
-                assert_eq!(forest.visible[i][j], Tree::Visible);
-            }
-        }
-    }
-    
-    #[test]
-    fn test_mark_visible_neighbors() {
-        let mut forest = default_fixture();
-        forest.mark_edges_visible();
-        println!("{:?}", forest);
-        loop {
-            if forest.mark_visible_neighbors() <= 0 {
-                break;
-            }
-            println!("{:?}", forest);
-        }
+        assert_eq!(res, exp);
     }
 
     #[test]
-    fn test_mark_undetermined_neighbors_of_visible_to_visible_or_invisible() {
-        // get the visible trees
-        // get their undetermined neighbors
-        // change to visible or invisible
+    fn test_mark_visible() {
+        let mut forest = default_fixture();
+        forest.mark_visible();
+        assert_eq!(forest.visibility_to_str(), "VVVVV\nVVVIV\nVVIVV\nVIVIV\nVVVVV\n".to_owned());
+    }
+
+    #[test]
+    fn test_max_scenic_score() {
+        let mut forest = default_fixture();
+        let res = forest.find_max_scenic_score();
+        assert_eq!(res, 8);
     }
 }
